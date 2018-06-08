@@ -1,3 +1,8 @@
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/dir.h>
+#include <unistd.h>
+
 #include "common.h"
 #include "dense_flow.h"
 
@@ -23,15 +28,46 @@ using namespace cv;
 using namespace cv::cuda;
 using namespace std;
 
-void calcDenseWarpFlowGPU(string file_name, int bound, int type, int step, int dev_id,
+int isDir(const char *path) {
+   struct stat statbuf;
+   if (stat(path, &statbuf) != 0)
+       return 0;
+   return S_ISDIR(statbuf.st_mode);
+}
+
+// dir_name should be "visible" or "satellite", containing directories of many dates
+void calcDenseWarpFlowGPU(string dir_name, int bound, int type, int step, int dev_id,
 					  std::vector<std::vector<uchar> >& output_x,
 					  std::vector<std::vector<uchar> >& output_y){
-	VideoCapture video_stream(file_name);
-	CHECK(video_stream.isOpened())<<"Cannot open video stream \""
-								  <<file_name
-								  <<"\" for optical flow extraction.";
 
-    // OpenCV 3.1.0 SURF interface
+	const char *cstr = dir_name.c_str();
+	vector<string> imgPath = {};
+
+	DIR *dir;
+	struct dirent *subEnt;
+	char *path = (char*) malloc(sizeof(char)*256);
+
+	if ((dir = opendir(cstr)) != NULL) {
+		while ((subEnt = readdir(dir)) != NULL) {
+			if (isDir(subEnt->d_name))
+				continue;
+
+			string name(subEnt->d_name);
+			if (name.substr(name.find_last_of(".") + 1) != "png")
+				continue;
+
+			sprintf(path, "%s/%s", cstr, subEnt->d_name);
+			string nameStr(path);
+			imgPath.push_back(nameStr);
+		}
+		closedir(dir);
+	} else {
+		perror("Error opening directory");
+		return;
+	}
+	free(path);
+	sort(imgPath.begin(), imgPath.end());
+
     //
     // source: http://stackoverflow.com/a/27533437/957997 
     //  http://stackoverflow.com/questions/27533203/how-do-i-use-sift-in-opencv-3-0-with-c
@@ -56,12 +92,14 @@ void calcDenseWarpFlowGPU(string file_name, int bound, int type, int step, int d
 
 	bool initialized = false;
 	int cnt = 0;
-	while(true){
+	string prevImgPath;
+	for(vector<string>::iterator it = imgPath.begin(); it != imgPath.end(); ++it) {
+
+		capture_frame = imread(*it, CV_LOAD_IMAGE_COLOR);
+		cnt++;
 
 		//build mats for the first frame
 		if (!initialized){
-			video_stream >> capture_frame;
-			if (capture_frame.empty()) return; // read frames until end
 			initializeMats(capture_frame, capture_image, capture_gray,
 						   prev_image, prev_gray);
 			capture_frame.copyTo(prev_image);
@@ -74,12 +112,8 @@ void calcDenseWarpFlowGPU(string file_name, int bound, int type, int step, int d
             // TODO! check detector_surf->detectAndCompute()
 
 			initialized = true;
-			for(int s = 0; s < step; ++s){
-				video_stream >> capture_frame;
-				cnt ++;
-				if (capture_frame.empty()) return; // read frames until end
-			}
-		}else {
+		} else {
+			cout << "Calculating optical flow between " << prevImgPath << " and " << *it << endl;
 			capture_frame.copyTo(capture_image);
 			cvtColor(capture_image, capture_gray, CV_BGR2GRAY);
 			d_frame_0.upload(prev_gray);
@@ -154,11 +188,11 @@ void calcDenseWarpFlowGPU(string file_name, int bound, int type, int step, int d
 					LOG(ERROR)<<"Unknown optical method: "<<type;
 			}
 
-
 			//get back flow map
             cuda::split(d_flow, planes);
             planes[0].download(flow_x);
             planes[1].download(flow_y);
+
 
 			vector<uchar> str_x, str_y;
 			encodeFlowMap(flow_x, flow_y, str_x, str_y, bound);
@@ -168,21 +202,7 @@ void calcDenseWarpFlowGPU(string file_name, int bound, int type, int step, int d
 
 			std::swap(prev_gray, capture_gray);
 			std::swap(prev_image, capture_image);
-
-
-			//get next frame
-			bool hasnext = true;
-			for(int s = 0; s < step; ++s){
-				video_stream >> capture_frame;
-				cnt ++;
-				hasnext = !capture_frame.empty();
-				// read frames until end
-			}
-			if (!hasnext){
-				return;
-			}
 		}
-
-
+		prevImgPath = *it;
 	}
 }
