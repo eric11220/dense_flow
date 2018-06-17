@@ -1,13 +1,23 @@
 import os
 import sys
+from datetime import datetime
 import shutil
 
 image_dir = sys.argv[1]
 output_dir = sys.argv[2]
+if len(sys.argv) == 4:
+    from_date = datetime.strptime(sys.argv[3], "%Y-%m-%d")
+else:
+    from_date = None
+
 os.makedirs(output_dir, exist_ok=True)
 
 first = True
 for date_dir in sorted(os.listdir(image_dir)):
+    date = datetime.strptime(date_dir, "%Y-%m-%d")
+    if from_date is not None and date < from_date:
+        continue
+
     flow_dir = os.path.join(output_dir, date_dir)
     os.makedirs(flow_dir, exist_ok=True)
 
