@@ -1,3 +1,11 @@
 *.o
+*.un~
+
 .idea/
+
 build/
+data/
+outputs/
+
+src/extract_warp_gpu
+src/logs/
