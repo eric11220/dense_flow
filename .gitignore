@@ -1,3 +1,7 @@
+**.un~
+
 *.o
 .idea/
 build/
+
+src/extract_warp_gpu
